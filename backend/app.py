@@ -32,6 +32,11 @@ st.html("""
 .stApp, body, .stApp > header { background:#ffffff !important; }
 /* 隐藏 Streamlit 顶部 Deploy 栏（Running / Deploy / 菜单），让首屏内容贴顶 */
 header[data-testid="stHeader"], .stApp > header { display:none !important; }
+/* 隐藏右下角 Streamlit Cloud 悬浮头像/管理菜单（仅云端部署时出现） */
+#MainMenu, [data-testid="stStatusWidget"], [data-testid="stDecoration"],
+div[data-testid="stBottom"] > div > div,
+.stApp [data-testid="stToolbarActions"] { display:none !important; }
+div.stApp > div > div[data-testid="stFloatingMenuContainer"] { display:none !important; }
 .block-container{padding-top:0.5rem !important;padding-bottom:0 !important;
   padding-left:0 !important;padding-right:0 !important;max-width:100% !important;
   background:#ffffff}
