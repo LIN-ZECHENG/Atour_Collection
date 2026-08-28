@@ -7,7 +7,7 @@
 // 构建时通过环境变量 RESULT_APP_URL 覆盖（如 https://your-app.streamlit.app/），
 // 未设置时回退到本地开发地址。注意：该变量用于 form action（服务端渲染），
 // 无需 PUBLIC_ 前缀，但需在构建环境注入。
-const RESULT_APP_URL = import.meta.env.RESULT_APP_URL || "http://localhost:8501/";
+const RESULT_APP_URL = import.meta.env.RESULT_APP_URL || "https://atourcollection.streamlit.app/";
 // 城市数据文件路径：必须用 BASE_URL 拼接，才能在 GitHub Pages 子路径下正确加载。
 // import.meta.env.BASE_URL 在配置 base 后为 "/Atour_Collection/"。
 const CITIES_JSON_URL = import.meta.env.BASE_URL + "atour-cities.json";
