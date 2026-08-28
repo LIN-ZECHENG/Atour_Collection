@@ -1,8 +1,8 @@
 @echo off
 REM =============================================================
-REM  Atour 亚朵比价 · 统一启动脚本 (Windows)
-REM  同时启动前端（Astro 起始页 4321）与后端（Streamlit 结果页 8501）
-REM  用法：双击 start.bat
+REM  Atour Hotel Price Comparison - Unified launcher (Windows)
+REM  Starts frontend (Astro landing page :4321) and backend (Streamlit results :8501)
+REM  Usage: double-click start.bat
 REM =============================================================
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
@@ -13,30 +13,31 @@ set "ASTRO_PORT=4321"
 set "STREAMLIT_PORT=8501"
 
 echo ==================================================
-echo   Atour 亚朵比价 - 一键启动
-echo   前端(起始页):  http://localhost:%ASTRO_PORT%
-echo   后端(结果页):  http://localhost:%STREAMLIT_PORT%
+echo   Atour - One-click launcher
+echo   Frontend (landing): http://localhost:%ASTRO_PORT%
+echo   Backend (results):  http://localhost:%STREAMLIT_PORT%
 echo ==================================================
 
-REM ---- 1) 前端 Astro ----
+REM ---- 1) Frontend Astro ----
 if not exist "%FRONTEND%\node_modules" (
-  echo [frontend] 安装依赖...
+  echo [frontend] Installing dependencies...
   pushd "%FRONTEND%"
   call npm install
   popd
 )
 
-echo [frontend] 构建 Astro...
+echo [frontend] Building Astro - result page: http://localhost:%STREAMLIT_PORT%
 pushd "%FRONTEND%"
+set "RESULT_APP_URL=http://localhost:%STREAMLIT_PORT%"
 call npm run build
 popd
 
-echo [frontend] 启动预览 (端口 %ASTRO_PORT%)...
-start "Atour-Frontend" cmd /c "cd /d "%FRONTEND%" && npm run preview -- --port %ASTRO_PORT% --host"
+echo [frontend] Starting preview (port %ASTRO_PORT%)...
+start "Atour-Frontend" /D "%FRONTEND%" cmd /c "npm run preview -- --port %ASTRO_PORT% --host"
 
-REM ---- 2) 后端 Streamlit ----
+REM ---- 2) Backend Streamlit ----
 if not exist "%BACKEND%\.venv" (
-  echo [backend] 创建 Python 虚拟环境并安装依赖...
+  echo [backend] Creating virtualenv and installing dependencies...
   pushd "%BACKEND%"
   python -m venv .venv
   call .venv\Scripts\activate.bat
@@ -44,12 +45,12 @@ if not exist "%BACKEND%\.venv" (
   popd
 )
 
-echo [backend] 启动 Streamlit (端口 %STREAMLIT_PORT%)...
-start "Atour-Backend" cmd /c "cd /d "%BACKEND%" && .venv\Scripts\streamlit.exe run app.py --server.port %STREAMLIT_PORT% --server.headless true"
+echo [backend] Starting Streamlit (port %STREAMLIT_PORT%)...
+start "Atour-Backend" /D "%BACKEND%" cmd /c ".venv\Scripts\python.exe -m streamlit run app.py --server.port %STREAMLIT_PORT% --server.headless true"
 
 echo.
-echo 两个服务已启动：
-echo   起始页: http://localhost:%ASTRO_PORT%
-echo   结果页: http://localhost:%STREAMLIT_PORT%
-echo 关闭对应窗口即可停止各服务。
+echo Both services started:
+echo   Landing page: http://localhost:%ASTRO_PORT%
+echo   Results page:  http://localhost:%STREAMLIT_PORT%
+echo Close the corresponding window to stop each service.
 endlocal

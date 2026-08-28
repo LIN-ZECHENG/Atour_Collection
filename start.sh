@@ -35,15 +35,15 @@ echo "  前端(起始页):  http://localhost:$ASTRO_PORT"
 echo "  后端(结果页):  http://localhost:$STREAMLIT_PORT"
 echo "=================================================="
 
-# 1) 前端：若无依赖则安装；若无构建产物则构建（构建的 safe-delete 清理告警非致命，不阻断）
+# 1) 前端：若无依赖则安装；每次启动都重新构建（dist 被 gitignore，且需注入结果页地址）
 if [ ! -d "$FRONTEND/node_modules" ]; then
   echo "[frontend] 安装依赖..."
   (cd "$FRONTEND" && "$NODE_BIN" "$NPM_BIN" install)
 fi
-if [ ! -d "$FRONTEND/dist" ]; then
-  echo "[frontend] 构建 Astro..."
-  (cd "$FRONTEND" && "$NODE_BIN" "$NPM_BIN" run build || true)
-fi
+# 结果页指向本地后端（而非 SearchBox.astro 默认的云端 Streamlit），
+# 通过环境变量 RESULT_APP_URL 在构建时注入到表单 action。
+echo "[frontend] 构建 Astro (结果页指向 http://localhost:$STREAMLIT_PORT)..."
+(cd "$FRONTEND" && RESULT_APP_URL="http://localhost:$STREAMLIT_PORT" "$NODE_BIN" "$NPM_BIN" run build || true)
 
 echo "[frontend] 启动预览 (端口 $ASTRO_PORT)..."
 (cd "$FRONTEND" && "$NODE_BIN" "$NPM_BIN" run preview -- --port "$ASTRO_PORT" --host) &
@@ -60,7 +60,9 @@ if [ ! -d "$BACKEND/.venv" ]; then
 fi
 
 echo "[backend] 启动 Streamlit (端口 $STREAMLIT_PORT)..."
-(cd "$BACKEND" && ./.venv/Scripts/streamlit.exe run app.py --server.port "$STREAMLIT_PORT" --server.headless true) &
+# 用 `python -m streamlit` 而非 streamlit.exe：Windows 下 streamlit.exe launcher 偶发损坏，
+# python -m 方式更稳定（云端 Streamlit Cloud 自行用 pip 环境启动，不受影响）。
+(cd "$BACKEND" && ./.venv/Scripts/python.exe -m streamlit run app.py --server.port "$STREAMLIT_PORT" --server.headless true) &
 BACK_PID=$!
 
 echo ""
