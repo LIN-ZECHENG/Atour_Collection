@@ -1,6 +1,7 @@
 # Atour Collection
 
-> 覆盖全国 31 省 / 262 城的亚朵酒店实时比价 · 非官方个人项目
+> 覆盖全国 31 省 / 262 城的亚朵酒店实时数据 · 非官方个人项目
+> 直接访问：https://lin-zecheng.github.io/Atour_Collection/
 
 ---
 
@@ -19,14 +20,6 @@
 
 ## Quick Start
 
-**Windows**
-
-```bash
-start.bat
-```
-
-**macOS / Linux / Git Bash**
-
 ```bash
 bash start.sh
 ```
@@ -36,7 +29,7 @@ bash start.sh
 | 服务 | 地址 | 说明 |
 |------|------|------|
 | 起始页 | `http://localhost:4321` | 选择城市 / 省份与日期 |
-| 结果页 | `http://localhost:8501` | 地图 + 酒店比价清单 |
+| 结果页 | `http://localhost:8501` | 地图 + 酒店对比列表 |
 
 停止服务：
 
