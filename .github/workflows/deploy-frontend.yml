@@ -1,0 +1,57 @@
+name: Deploy Frontend to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 授予 GITHUB_TOKEN 写 Pages 的权限
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只跑一个部署，避免冲突
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build static site
+        working-directory: frontend
+        env:
+          # 通过仓库 Secret 注入后端（Streamlit）地址。
+          # 先在 GitHub 仓库 Settings → Secrets and variables → Actions 里
+          # 添加名为 RESULT_APP_URL 的 Secret，值为后端 URL，例如：
+          #   https://your-app.streamlit.app/
+          # 未设置时前端回退到 http://localhost:8501/（仅本地调试用）。
+          RESULT_APP_URL: ${{ secrets.RESULT_APP_URL }}
+        run: npm run build
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
