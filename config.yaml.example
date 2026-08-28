@@ -1,0 +1,11 @@
+token:
+  atour_token: ""
+
+request:
+  list_delay:
+    min: 0.3
+    max: 0.5
+  light_delay:
+    min: 0.25
+    max: 0.6
+  retry_backoff: 1.5

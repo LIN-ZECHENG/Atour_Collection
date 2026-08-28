@@ -1,0 +1,733 @@
+html,body,#hero_bg,canvas{margin:0;padding:0;width:100%;height:100%;overflow:hidden;}
+html{
+  /* 滚动锚定必须同时禁用在根滚动容器（html）上，
+     只禁用在 body 对 document 滚动不生效 */
+  overflow-anchor:none;
+  overscroll-behavior:none;
+}
+body{
+  font-family:'Poppins',sans-serif;
+  position:relative;
+  background:#000;
+  user-select:none;
+  /* 禁用滚动锚定：弹层（含数百个城市按钮）插入时，Chrome 的 scroll anchoring
+     会调整 scrollTop 造成居中内容"跳到上方再弹回" */
+  overflow-anchor:none;
+}
+
+/* ===== 波纹动画通用样式 ===== */
+.ripple-container{
+  position:relative;
+  overflow:hidden;
+}
+/* 关键修复：ripple 必须全局绝对定位。
+   原先只定义在 .ripple-container/.magnetic-btn 后代选择器下，
+   胶囊按钮（目的地/日期等）内的 ripple 是 static 块级元素（约 200x200px），
+   会撑开 flex 布局导致文字移位、600ms 后移除时闪回。 */
+.ripple{
+  position:absolute;
+  border-radius:50%;
+  transform:scale(0);
+  animation:ripple-animation .6s linear;
+  background:rgba(0,0,0,.12);
+  pointer-events:none;
+  flex:0 0 auto !important;
+  width:0;
+  height:0;
+  z-index:0;
+}
+.ripple-container .ripple{
+  background:rgba(255,255,255,.35);
+}
+@keyframes ripple-animation{
+  to{ transform:scale(4); opacity:0; }
+}
+#hero_bg canvas{display:block;}
+
+.label{
+  margin:0;
+  font-size:clamp(3rem,10vw,10rem);
+  letter-spacing:.1em;
+  color:#000;
+  pointer-events:none;
+  text-shadow:0 0 2px #fff, 0 0 6px #fff;
+}
+
+html[data-shape="square"] .label{
+  font-size:clamp(1.8rem,6vw,6rem);   /* 60% of default label size */
+  letter-spacing:.02em;               /* tighter char spacing */
+  word-spacing:.4em;                  /* wider gap between words */
+}
+
+.pager{
+  position:absolute;
+  left:1rem;
+  bottom:1rem;
+  display:flex;
+  gap:.75rem;
+  font-size:.9rem;
+}
+
+a:hover, a[aria-current="page"]{color:#fff; cursor: pointer;}
+
+.social{
+  position:absolute;
+  right:1rem;
+  bottom:1rem;
+  font-size:.9rem;
+}
+.social img {
+  width:1.2rem;
+  height:1.2rem;
+  vertical-align:middle;
+  margin-right:.5rem;
+}
+.social  a{
+  color:#fff;
+  font-weight: 100;
+}
+.social a:hover {
+  text-decoration: underline ;
+}
+
+a{
+  color:#fff8;
+  text-decoration:none;
+  transition:color .2s;
+}
+
+.hero{
+  /* fixed：视口锚定，任何文档滚动/锚定调整都不可能使它瞬间位移 */
+  position:fixed;
+  inset:0;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-items:center;
+  pointer-events:none;
+}
+
+.caption{
+  margin-top:.6rem;
+  text-align:center;
+  font-size:1.1rem;            /* enlarged Chinese, still below English */
+  letter-spacing:.08em;
+  color:#000;
+  font-family:'PingFang SC','Microsoft YaHei','Noto Sans SC',sans-serif;
+  pointer-events:none;
+  text-shadow:0 0 2px #fff, 0 0 6px #fff;
+}
+
+/* ===== SearchBox 极简胶囊查询条 ===== */
+.search-box{
+  margin-top:3rem;
+  pointer-events:auto;
+  font-family:'PingFang SC','Microsoft YaHei','Noto Sans SC',sans-serif;
+  display:flex;
+  align-items:center;
+  gap:14px;
+  flex-wrap:wrap;
+  justify-content:center;
+  /* 关键修复：给 .search-box 一个明确的宽度（definite size），
+     让内部 .search-capsule 的 flex 计算有确定的主轴可用空间，
+     避免点击面板从 hidden→可见时，layout 重排把胶囊从 min-width 弹到 max-width。
+     下限保证下限布局，上限保证不会太宽 */
+  width:100%;
+  max-width:880px;
+}
+
+/* 弹层定位基准容器：宽度与胶囊一致，弹层挂在它下面（胶囊外），
+   保证弹层显隐与胶囊内部 flex 布局彻底隔离。
+   尺寸完全锁定，杜绝任何情况下的高度/宽度参与外层计算 */
+.search-capsule-wrap{
+  position:relative;
+  flex:0 0 auto;
+  width:620px;
+  height:64px;
+}
+
+.search-capsule{
+  display:flex;
+  align-items:stretch;
+  background:rgba(255,255,255,.4);
+  border:1px solid rgba(255,255,255,.7);
+  backdrop-filter:blur(16px);
+  -webkit-backdrop-filter:blur(16px);
+  border-radius:999px;
+  padding:6px;
+  box-shadow:0 8px 28px rgba(0,0,0,.10);
+  /* 固定胶囊宽度，不参与外层 flex 伸缩 */
+  width:620px;
+  height:64px;
+  flex:0 0 620px;
+  position:relative;
+  box-sizing:border-box;
+  /* 提升为独立合成层：避免弹层出现/消失时 backdrop-filter 元素
+     重新栅格化导致的渲染位置闪跳 */
+  transform:translateZ(0);
+}
+
+.capsule-section{
+  position:relative;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  gap:2px;
+  padding:4px 20px;
+  flex:1 1 0;
+  /* 关键修复：min-width:0 让 flex item 可以正确缩小，
+     不会被内部文本（如长日期字符串）撑开导致胶囊总宽度超过 max-width */
+  min-width:0;
+  overflow:visible;
+}
+
+.capsule-loc{ flex:1.4; position:relative; }
+.capsule-date{ flex:1.3; position:relative; }
+
+.capsule-divider{
+  width:1px;
+  background:rgba(0,0,0,.12);
+  margin:6px 0;
+}
+
+.capsule-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  min-height:18px;
+  /* 关键修复：让 label 和 tab 在父级变窄时优先保留完整可读，
+     而非被压缩。同时整个 head 不参与主轴收缩 */
+  flex:0 0 auto;
+}
+
+.capsule-label{
+  font-size:11px;
+  font-weight:500;
+  color:#888;
+  letter-spacing:.2px;
+  white-space:nowrap;
+  display:flex;
+  align-items:center;
+  gap:4px;
+  /* label 不收缩，避免被截断 */
+  flex-shrink:0;
+}
+
+.capsule-label .nights{
+  color:#aaa;
+  font-weight:400;
+}
+
+.capsule-value{
+  appearance:none;
+  border:none;
+  background:transparent;
+  text-align:left;
+  font-size:15px;
+  font-weight:700;
+  color:#1a1a1a;
+  cursor:pointer;
+  padding:0;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  white-space:nowrap;
+  font-family:inherit;
+  min-width:0;
+  /* 关键修复：line-height 由 1.25 提升到 1.5，避免"福州市"等中文字符的下伸部分
+     (市字下方的笔画) 在 row 中被裁切。同时给 .capsule-value 设置合理的 line-height
+     配合父级 justify-content:center，能让 value 垂直居中显示 */
+  line-height:1.5;
+  position:relative;
+  overflow:hidden;
+  /* text-overflow 在 display:flex 上不生效，依靠 .capsule-value > span[主文本] 处理截断。
+     overflow:hidden 是为了截断任何可能溢出的子元素（如波纹），文本截断由内部 span 自行处理 */
+}
+/* 关键修复：主文本 span 在 flex 容器中用 min-width:0 + text-overflow:ellipsis，
+   才能在 .capsule-loc 被城市/省份 tab 挤压时优雅省略（如"福州市"）
+   而非硬性截断。注意仅对主文本 span 生效，.caret 不受影响 */
+.capsule-value > span:not(.caret):not(.ripple){
+  flex:1 1 auto;
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.capsule-value > .caret{
+  flex:0 0 auto;
+}
+
+.capsule-value.date-display{ cursor:pointer; }
+
+.capsule-value .caret{
+  font-size:10px;
+  color:#888;
+  margin-left:2px;
+}
+
+/* 城市/省份 tab 切换（位于目的地/地区标签右侧） */
+.scope-toggle{
+  display:flex;
+  gap:0;
+  /* 关键修复：tab 切换器不收缩，保留完整可读 */
+  flex-shrink:0;
+}
+
+.scope-tab{
+  appearance:none;
+  border:1px solid #c8c2b8;
+  background:transparent;
+  color:#777;
+  font-size:10px;
+  padding:2px 9px;
+  cursor:pointer;
+  font-family:inherit;
+  transition:background .15s, color .15s;
+  line-height:1.4;
+  position:relative;
+  overflow:hidden;
+}
+
+.scope-tab:first-child{
+  border-radius:12px 0 0 12px;
+  border-right:none;
+}
+
+.scope-tab:last-child{
+  border-radius:0 12px 12px 0;
+}
+
+.scope-tab.active{
+  background:#fff;
+  color:#1a1a1a;
+  border-color:#a89f8f;
+  font-weight:600;
+}
+
+.scope-tab:hover:not(.active){
+  background:rgba(255,255,255,.4);
+}
+
+/* 地点弹层（挂载在 .search-capsule-wrap 下，胶囊之外） */
+.loc-panel{
+  position:absolute;
+  top:calc(100% + 8px);
+  left:6px;
+  width:340px;
+  min-width:340px;
+  max-width:340px;
+  z-index:50;
+  background:#fff;
+  border:1px solid #e5e5e5;
+  border-radius:12px;
+  box-shadow:0 16px 40px rgba(0,0,0,.18);
+  padding:8px;
+  max-height:min(520px, calc(100vh - 40px));
+  /* 默认 display:none，仅 :not([hidden]) 时显示。
+     弹层不在胶囊 flex 容器内，display 切换不影响胶囊布局 */
+  display:none;
+  flex-direction:column;
+  box-sizing:border-box;
+  /* 关键修复：contain 隔离弹层的布局与绘制——
+     1) 弹层内容（数百个城市按钮）不再贡献文档可滚动溢出，杜绝滚动锚定/焦点滚动；
+     2) 弹层提升为独立合成层，出现时不再触发 backdrop-filter 胶囊重栅格化，
+        修复胶囊瞬间跳到上方、文字被截断成"福..."的渲染闪跳 */
+  contain:layout paint;
+  transform:translateZ(0);
+}
+.loc-panel:not([hidden]){
+  display:flex;
+}
+
+.loc-search{
+  border:1px solid #e0e0e0;
+  border-radius:8px;
+  padding:6px 10px;
+  font-size:13px;
+  outline:none;
+  margin-bottom:6px;
+  font-family:inherit;
+}
+
+.loc-search:focus{ border-color:#1a1a1a; }
+
+.loc-options{
+  /* 自适应高度：在 panel 内填满剩余空间，上限随视口变化 */
+  overflow-y:auto;
+  overflow-x:hidden;
+  flex:1 1 auto;
+  min-height:0;
+  max-height:min(440px, calc(100vh - 140px));
+  display:flex;
+  flex-direction:column;
+  width:100%;
+  min-width:0;
+  box-sizing:border-box;
+}
+
+.loc-opt{
+  appearance:none;
+  border:none;
+  background:transparent;
+  text-align:left;
+  padding:7px 10px;
+  font-size:13px;
+  border-radius:6px;
+  cursor:pointer;
+  color:#1a1a1a;
+  font-family:inherit;
+  position:relative;
+  overflow:hidden;
+  width:100%;
+  box-sizing:border-box;
+  flex:0 0 auto;
+  /* 关键修复：min-width:0 + ellipsis，避免长城市名（如"湘西土家族苗族自治州"）
+     通过 nowrap 把按钮宽度撑大、进而把 panel 撑变形 */
+  min-width:0;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+  max-width:100%;
+  /* 修复：明确行高与最小高度，防止文字被截断 */
+  line-height:1.5;
+  min-height:32px;
+  display:flex;
+  align-items:center;
+}
+
+.loc-opt:hover{ background:#f5f1ea; }
+
+.loc-opt.selected{
+  background:#1a1a1a;
+  color:#fff;
+}
+
+/* 多选操作条：提示 + 全选/清除 */
+.loc-tools{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:2px 4px 6px;
+  margin-bottom:2px;
+  border-bottom:1px solid #f0f0f0;
+}
+.loc-tools-hint{
+  font-size:11px;
+  color:#999;
+  letter-spacing:.3px;
+}
+.loc-tools-btns{ display:flex; gap:6px; }
+.loc-tool-btn{
+  appearance:none;
+  border:1px solid #e0e0e0;
+  background:#fff;
+  color:#1a1a1a;
+  font-size:11px;
+  padding:3px 10px;
+  border-radius:14px;
+  cursor:pointer;
+  font-family:inherit;
+  transition:all .15s;
+  position:relative;
+  overflow:hidden;
+}
+.loc-tool-btn:hover{ border-color:#1a1a1a; background:#fafafa; }
+.loc-tool-btn:disabled{ opacity:.4; cursor:not-allowed; border-color:#e0e0e0; }
+
+/* 地点胶囊未选择时提示 */
+.capsule-value.empty{ color:#b8b8b8; }
+
+/* 日期弹层（挂载在 .search-capsule-wrap 下，胶囊之外） */
+.date-panel{
+  position:absolute;
+  top:calc(100% + 8px);
+  right:0;
+  z-index:50;
+  background:#fff;
+  border:1px solid #e5e5e5;
+  border-radius:12px;
+  box-shadow:0 16px 40px rgba(0,0,0,.18);
+  padding:8px 10px 6px;
+  display:none;
+  flex-direction:column;
+  gap:6px;
+  width:240px;
+  box-sizing:border-box;
+  /* 同 .loc-panel：隔离布局/绘制并提升合成层，防止显隐时胶囊闪跳 */
+  contain:layout paint;
+  transform:translateZ(0);
+}
+.date-panel:not([hidden]){
+  display:flex;
+}
+
+.dp-header{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.dp-range-row{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  border:1px solid #e0e0e0;
+  border-radius:8px;
+  padding:6px 8px;
+  background:#fff;
+  position:relative;
+}
+.dp-range-cell{
+  appearance:none;
+  background:transparent;
+  border:none;
+  padding:4px 6px;
+  cursor:pointer;
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:2px;
+  flex:1;
+  font-family:inherit;
+  text-align:left;
+  min-width:0;
+  position:relative;
+  overflow:hidden;
+}
+.dp-range-cell.active{ color:#1e6fff; }
+.dp-range-lbl{
+  font-size:11px;
+  color:#888;
+  font-weight:500;
+}
+.dp-range-cell.active .dp-range-lbl{ color:#1e6fff; }
+.dp-range-val{
+  font-size:14px;
+  font-weight:600;
+  color:#1a1a1a;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  max-width:100%;
+}
+.dp-range-placeholder{ color:#b0b0b0; font-weight:500; }
+.dp-range-arrow{
+  color:#888;
+  font-size:14px;
+  flex-shrink:0;
+}
+.dp-range-caret{
+  color:#888;
+  font-size:10px;
+  flex-shrink:0;
+  position:absolute;
+  right:12px;
+  top:50%;
+  transform:translateY(-50%);
+  pointer-events:none;
+}
+
+.dp-cal{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.dp-cal-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 4px;
+}
+.dp-nav{
+  appearance:none;
+  background:transparent;
+  border:none;
+  width:28px;
+  height:28px;
+  border-radius:50%;
+  font-size:18px;
+  color:#555;
+  cursor:pointer;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  font-family:inherit;
+  line-height:1;
+  position:relative;
+  overflow:hidden;
+}
+.dp-nav:hover{ background:#f3f3f3; color:#1a1a1a; }
+.dp-cal-title{
+  font-size:14px;
+  font-weight:600;
+  color:#1a1a1a;
+}
+.dp-weekdays{
+  display:grid;
+  grid-template-columns:repeat(7,1fr);
+  text-align:center;
+  font-size:11px;
+  color:#888;
+  font-weight:500;
+  padding:2px 0;
+}
+.dp-weekdays span{ padding:2px 0; font-size:10px; }
+.dp-days{
+  display:grid;
+  grid-template-columns:repeat(7,1fr);
+  gap:2px;
+}
+.dp-day{
+  appearance:none;
+  background:transparent;
+  border:none;
+  height:30px;
+  border-radius:6px;
+  font-size:12px;
+  color:#1a1a1a;
+  cursor:pointer;
+  font-family:inherit;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  transition:background .12s, color .12s;
+  padding:0;
+  position:relative;
+  overflow:hidden;
+}
+/* 扩大点击区域：上下各向外扩展 6px，左右各扩 4px，超出视觉边界仍可点 */
+.dp-day::before{
+  content:"";
+  position:absolute;
+  top:-6px;
+  bottom:-6px;
+  left:-4px;
+  right:-4px;
+  z-index:-1;
+}
+.dp-day:hover{ background:#f3f3f3; }
+.dp-day-out{ color:#cfcfcf; }
+.dp-day-today{ font-weight:700; }
+.dp-day-start,
+.dp-day-end{
+  background:#1e6fff;
+  color:#fff;
+  font-weight:600;
+}
+.dp-day-start:hover,
+.dp-day-end:hover{ background:#1a5fe0; color:#fff; }
+.dp-day-in-range{ background:rgba(30,111,255,.12); color:#1a1a1a; }
+.dp-day-in-range:hover{ background:rgba(30,111,255,.20); }
+
+.dp-footer{
+  text-align:right;
+  font-size:12px;
+  color:#1e6fff;
+  font-weight:500;
+  padding:0 4px;
+}
+
+/* 查询按钮：纯黑色实心，外置（高度与胶囊一致） */
+.search-btn{
+  height:64px;
+  padding:0 22px;
+  border:none;
+  border-radius:999px;
+  background:#1a1a1a;
+  color:#fff;
+  font-size:14px;
+  font-weight:600;
+  cursor:pointer;
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  white-space:nowrap;
+  transition:background .2s;
+  flex-shrink:0;
+  position:relative;
+  overflow:hidden;
+}
+
+.search-btn:hover{ background:#333; }
+
+/* ===== 磁吸按钮 (Magnetic Button) ===== */
+.magnetic-btn{
+  position:relative;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  overflow:hidden;
+  transition:transform .25s cubic-bezier(.23,1,.32,1);
+  will-change:transform;
+}
+
+.magnetic-btn__inner{
+  display:inline-block;
+  pointer-events:none;
+  transition:transform .25s cubic-bezier(.23,1,.32,1);
+  will-change:transform;
+  position:relative;
+  z-index:1;
+}
+
+/* 磁吸按钮悬停时背景扩散 */
+.magnetic-btn::before{
+  content:'';
+  position:absolute;
+  inset:0;
+  border-radius:inherit;
+  background:#333;
+  transform:scale(0);
+  opacity:0;
+  transition:transform .5s cubic-bezier(.23,1,.32,1), opacity .4s ease;
+  z-index:0;
+}
+
+.magnetic-btn:hover::before{
+  transform:scale(1);
+  opacity:1;
+}
+
+/* 磁吸按钮点击水波纹 */
+.magnetic-btn .ripple{
+  position:absolute;
+  border-radius:50%;
+  transform:scale(0);
+  animation:magnetic-ripple .6s linear;
+  background:rgba(255,255,255,.35);
+  pointer-events:none;
+  z-index:2;
+}
+@keyframes magnetic-ripple{
+  to{ transform:scale(4); opacity:0; }
+}
+
+.search-btn-icon{
+  font-size:14px;
+  line-height:1;
+}
+
+/* 响应式：小屏垂直堆叠 */
+@media (max-width:780px){
+  .search-box{ flex-direction:column; gap:10px; }
+  .search-capsule-wrap{ width:auto; height:auto; }
+  .search-capsule{
+    flex-direction:column;
+    border-radius:18px;
+    min-width:0;
+    padding:8px;
+    height:auto;
+  }
+  .capsule-divider{
+    width:auto;
+    height:1px;
+    margin:0 16px;
+  }
+  .capsule-section{ padding:8px 16px; }
+  .search-btn{ height:54px; width:100%; justify-content:center; }
+  .loc-panel, .date-panel{
+    left:8px;
+    right:8px;
+    width:auto;
+    min-width:0;
+  }
+}

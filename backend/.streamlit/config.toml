@@ -1,0 +1,7 @@
+# Streamlit 运行配置
+# 本地/服务器启动时生效；部署到 Streamlit Community Cloud 时可忽略（平台自动配置）。
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

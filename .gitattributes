@@ -1,0 +1,4 @@
+# 统一行尾：避免 Windows(LF→CRLF) 与 Linux 环境产生 diff 噪音
+* text=auto
+*.sh text eol=lf
+*.bat text eol=crlf

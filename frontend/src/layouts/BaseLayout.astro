@@ -1,0 +1,36 @@
+---
+/* Props every page supplies */
+const { title = 'Squares', shape = 'square', pixelSize } = Astro.props;
+import "../styles/main.css";
+import ThreeShader from "../components/ThreeShader.astro";
+import SearchBox from "../components/SearchBox.astro";
+import mainUrl from "../script/main.ts?url";
+const palettes = {
+  square  : { ink: '#1e6fff', bg: '#ffffff' }, 
+  
+  circle  : { ink: '#55ffa7', bg: '#001d1d' }, 
+  triangle: { ink: '#5ab0ff', bg: '#0d1021' }, 
+  diamond : { ink: '#f6cf3e', bg: '#080603' }, 
+};
+type Shape = keyof typeof palettes;
+const { bg, ink } = palettes[shape as Shape];
+---
+<!DOCTYPE html>
+<html lang="en" data-shape={shape}>
+  <head>
+    <meta charset="utf-8" />
+    <title>{title}</title>
+    <link rel="preconnect" href="https://fonts.gstatic.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600&display=swap" rel="stylesheet" />
+
+  </head>
+  <body data-shape={shape}>
+  
+    <ThreeShader  {...{bg, ink, shape, pixelSize}}  />
+    <div class="hero">
+      <h1 class="label">{title}</h1>
+      <div class="caption">精选您的每一次亚朵之旅</div>
+      <SearchBox />
+    </div>
+  </body>
+</html>

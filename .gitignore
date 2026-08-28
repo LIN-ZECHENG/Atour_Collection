@@ -1,0 +1,28 @@
+# ===== 敏感配置：禁止提交，避免 token 泄漏 =====
+# config.yaml 内含 atour_token，绝不能提交。
+# 提交时应使用 config.yaml.example 作为模板。
+config.yaml
+
+# ===== Python / Streamlit 后端 =====
+backend/.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# ===== Node / Astro 前端 =====
+frontend/node_modules/
+frontend/dist/
+frontend/.astro/
+npm-debug.log*
+
+# ===== 日志与临时文件 =====
+*.log
+.DS_Store
+Thumbs.db
+_tmp_index.html
+
+# ===== 环境变量 / 本地覆盖 =====
+.env
+.env.local

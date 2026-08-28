@@ -1,0 +1,585 @@
+---
+// SearchBox: 亚朵酒店查询输入组件
+// 极简胶囊形：左段「目的地/地区 + 城市/省份 tab」+ 右段「入住-离店时间」+ 外置黑色按钮
+// 城市/省份数据来自亚朵官方接口（/atourlife/city/listOfChain），由 atour_api.py
+// 的 get_atour_cities() 获取后导出到 public/atour-cities.json。
+// 结果页（后端 Streamlit）地址：
+// 构建时通过环境变量 RESULT_APP_URL 覆盖（如 https://your-app.streamlit.app/），
+// 未设置时回退到本地开发地址。注意：该变量用于 form action（服务端渲染），
+// 无需 PUBLIC_ 前缀，但需在构建环境注入。
+const RESULT_APP_URL = import.meta.env.RESULT_APP_URL || "http://localhost:8501/";
+const CITIES_JSON_URL = "/atour-cities.json";
+const DEFAULT_CITY = "福州市";
+const DEFAULT_PROVINCE = "福建";
+---
+
+<form id="atour-search" class="search-box" action={RESULT_APP_URL} method="get" target="_self">
+  <div class="search-capsule-wrap">
+    <div class="search-capsule">
+      <div class="capsule-section capsule-loc">
+        <div class="capsule-head">
+          <div class="capsule-label">目的地 / 地区</div>
+          <div class="scope-toggle" role="tablist" aria-label="查询范围">
+            <button type="button" class="scope-tab active" data-scope="city" role="tab">城市</button>
+            <button type="button" class="scope-tab" data-scope="province" role="tab">省份</button>
+          </div>
+        </div>
+        <button type="button" class="capsule-value" data-loc-toggle>
+          <span data-loc-text>福州市</span>
+          <span class="caret">▾</span>
+        </button>
+      </div>
+
+      <div class="capsule-divider"></div>
+
+      <div class="capsule-section capsule-date">
+        <div class="capsule-head">
+          <div class="capsule-label" id="date-label">入住 - 离店时间 <span class="nights" data-nights>（1晚）</span></div>
+        </div>
+        <button type="button" class="capsule-value date-display" data-date-toggle>
+          <span data-date-text>2026/08/28 - 2026/08/29</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 弹层彻底移出 .search-capsule：弹层的显隐/渲染与胶囊 flex 布局完全隔离，
+         无论 display 如何切换都不可能引起胶囊内文字位移 -->
+    <div class="loc-panel" hidden data-loc-panel>
+      <input type="text" class="loc-search" data-loc-search placeholder="搜索…" />
+      <div class="loc-tools" data-loc-tools>
+        <span class="loc-tools-hint" data-loc-tools-hint>可多选</span>
+        <div class="loc-tools-btns">
+          <button type="button" class="loc-tool-btn" data-loc-all>全选</button>
+          <button type="button" class="loc-tool-btn" data-loc-clear>清除</button>
+        </div>
+      </div>
+      <div class="loc-options" data-loc-options></div>
+    </div>
+
+    <div class="date-panel" hidden data-date-panel>
+      <div class="dp-header">
+        <div class="dp-range-row">
+          <button type="button" class="dp-range-cell dp-range-start" data-pick="in">
+            <span class="dp-range-lbl">入住</span>
+            <span class="dp-range-val" data-range-in>2026-08-18</span>
+          </button>
+          <span class="dp-range-arrow">→</span>
+          <button type="button" class="dp-range-cell dp-range-end" data-pick="out">
+            <span class="dp-range-lbl">离店</span>
+            <span class="dp-range-val dp-range-placeholder" data-range-out>选择离店日期</span>
+          </button>
+          <span class="dp-range-caret">▾</span>
+        </div>
+      </div>
+      <div class="dp-cal">
+        <div class="dp-cal-head">
+          <button type="button" class="dp-nav" data-prev-month aria-label="上一月">‹</button>
+          <div class="dp-cal-title" data-cal-title>2026年8月</div>
+          <button type="button" class="dp-nav" data-next-month aria-label="下一月">›</button>
+        </div>
+        <div class="dp-weekdays">
+          <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+        </div>
+        <div class="dp-days" data-days-grid></div>
+      </div>
+      <div class="dp-footer" data-dp-hint>请选择离店日期</div>
+    </div>
+  </div>
+
+  <button type="submit" class="search-btn magnetic-btn">
+    <span class="magnetic-btn__inner">开始查询</span>
+  </button>
+
+  <input type="hidden" name="scope" data-form-scope value="city" />
+  <!-- 多选地点：JS 动态维护多个同名 hidden input（name=location），支持多城市/多省 -->
+  <input type="hidden" name="location" data-form-location value={DEFAULT_CITY} />
+  <input type="hidden" name="check_in" data-form-checkin />
+  <input type="hidden" name="check_out" data-form-checkout />
+  <input type="hidden" name="enrich" value="true" />
+  <input type="hidden" name="auto" value="1" />
+</form>
+
+<script define:vars={{ CITIES_JSON_URL, DEFAULT_CITY, DEFAULT_PROVINCE }}>
+  (function() {
+    const form = document.getElementById('atour-search');
+    const locBtn = form.querySelector('[data-loc-toggle]');
+    const locText = form.querySelector('[data-loc-text]');
+    const locPanel = form.querySelector('[data-loc-panel]');
+    const locSearch = form.querySelector('[data-loc-search]');
+    const locOptions = form.querySelector('[data-loc-options]');
+    const scopeTabs = form.querySelectorAll('[data-scope]');
+    const dateBtn = form.querySelector('[data-date-toggle]');
+    const dateText = form.querySelector('[data-date-text]');
+    const datePanel = form.querySelector('[data-date-panel]');
+    const rangeIn = form.querySelector('[data-range-in]');
+    const rangeOut = form.querySelector('[data-range-out]');
+    const calTitle = form.querySelector('[data-cal-title]');
+    const daysGrid = form.querySelector('[data-days-grid]');
+    const prevMonthBtn = form.querySelector('[data-prev-month]');
+    const nextMonthBtn = form.querySelector('[data-next-month]');
+    const dpHint = form.querySelector('[data-dp-hint]');
+    const pickBtns = form.querySelectorAll('[data-pick]');
+    const nightsEl = form.querySelector('[data-nights]');
+    const formScope = form.querySelector('[data-form-scope]');
+    const formLocation = form.querySelector('[data-form-location]');
+    const formCheckin = form.querySelector('[data-form-checkin]');
+    const formCheckout = form.querySelector('[data-form-checkout]');
+    const locTools = form.querySelector('[data-loc-tools]');
+    const locToolsHint = form.querySelector('[data-loc-tools-hint]');
+    const locAllBtn = form.querySelector('[data-loc-all]');
+    const locClearBtn = form.querySelector('[data-loc-clear]');
+
+    // 城市/省份数据改为运行时从服务器拉取：每次打开地点面板都向 /atour-cities.json 发起请求，
+    // 不再内联静态拼音字典。JSON 结构：{ 省份: [城市, ...] }。
+    let CITIES_DATA = null;          // 拉取成功后填充
+    const FALLBACK_DATA = {         // 拉取失败时的兜底，保证 UI 不空
+      "福建": ["福州市"], "北京": ["北京市"], "上海": ["上海市"], "广东": ["广州市", "深圳市"],
+    };
+    function _cityData() { return CITIES_DATA || FALLBACK_DATA; }
+    function cityNames() { return Object.values(_cityData()).flat(); }
+    function provinceNames() { return Object.keys(_cityData()); }
+
+    function sortKey(name) {
+      return name; // 直接用 localeCompare 按拼音排序，无需内联拼音表
+    }
+
+    function buildSortedOptions(names, scope) {
+      return names.slice().sort((a, b) => a.localeCompare(b, 'zh'));
+    }
+
+    // 状态
+    let currentScope = 'city';
+    let selectedLocs = new Set([DEFAULT_CITY]); // 多选：当前 scope 下已选中的地点集合
+
+    function locNamesOf(scope) {
+      return scope === 'province' ? provinceNames() : cityNames();
+    }
+    // 更新地点胶囊显示：已选 1 个显示名称，多个显示"N个地点"
+    function updateLocText() {
+      if (selectedLocs.size === 0) {
+        locText.textContent = '请选择地点';
+        locText.classList.add('empty');
+      } else if (selectedLocs.size === 1) {
+        locText.textContent = Array.from(selectedLocs)[0];
+        locText.classList.remove('empty');
+      } else {
+        locText.textContent = `已选 ${selectedLocs.size} 个`;
+        locText.classList.remove('empty');
+      }
+    }
+
+    // ---- 日期选择器（仿图样式的单月历 + 入住/离店两段式） ----
+    let checkInDate = null;   // Date
+    let checkOutDate = null;  // Date
+    let calMonth = null;      // 当前月历显示的月份（Date 任意一天，月份即代表）
+    let pickingSide = 'in';   // 'in' | 'out'
+
+    const WEEKDAYS = ['日','一','二','三','四','五','六'];
+    const MONTHS_ZH = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+
+    function fmtIso(d) {
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${d.getFullYear()}-${m}-${day}`;
+    }
+    function fmtSlash(d) {
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${d.getFullYear()}/${m}/${day}`;
+    }
+    function startOfDay(d) {
+      const x = new Date(d);
+      x.setHours(0, 0, 0, 0);
+      return x;
+    }
+    function sameDay(a, b) {
+      return a && b && a.getFullYear() === b.getFullYear()
+        && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    }
+
+    function setDefaultDates() {
+      const today = startOfDay(new Date());
+      checkInDate = new Date(today); checkInDate.setDate(checkInDate.getDate() + 1);
+      checkOutDate = new Date(today); checkOutDate.setDate(checkOutDate.getDate() + 2);
+      calMonth = new Date(checkInDate);
+      renderCal();
+      updateDateText();
+    }
+
+    function updateDateText() {
+      if (!checkInDate) return;
+      if (checkOutDate) {
+        dateText.textContent = `${fmtSlash(checkInDate)} - ${fmtSlash(checkOutDate)}`;
+        const nights = Math.max(0, Math.round((checkOutDate - checkInDate) / 86400000));
+        nightsEl.textContent = nights === 1 ? '（1晚）' : `（${nights}晚）`;
+        formCheckin.value = fmtIso(checkInDate);
+        formCheckout.value = fmtIso(checkOutDate);
+      } else {
+        dateText.textContent = fmtSlash(checkInDate);
+        nightsEl.textContent = '（请选择离店）';
+        formCheckin.value = fmtIso(checkInDate);
+        formCheckout.value = '';
+      }
+      // 同步顶部"入住/离店"显示
+      rangeIn.textContent = fmtIso(checkInDate);
+      if (checkOutDate) {
+        rangeOut.textContent = fmtIso(checkOutDate);
+        rangeOut.classList.remove('dp-range-placeholder');
+      } else {
+        rangeOut.textContent = '选择离店日期';
+        rangeOut.classList.add('dp-range-placeholder');
+      }
+      // 同步底部提示
+      if (!checkOutDate) {
+        dpHint.textContent = pickingSide === 'out' ? '请选择离店日期' : '请选择入住日期';
+      } else {
+        const nights = Math.max(0, Math.round((checkOutDate - checkInDate) / 86400000));
+        dpHint.textContent = `共 ${nights} 晚`;
+      }
+    }
+
+    function renderCal() {
+      // 标题
+      calTitle.textContent = `${calMonth.getFullYear()}年${MONTHS_ZH[calMonth.getMonth()]}`;
+      // 当月第一天是星期几
+      const first = new Date(calMonth.getFullYear(), calMonth.getMonth(), 1);
+      const firstDow = first.getDay(); // 0=日
+      // 当月总天数
+      const daysInMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 0).getDate();
+      // 上月补位天数
+      const prevDays = new Date(calMonth.getFullYear(), calMonth.getMonth(), 0).getDate();
+
+      daysGrid.innerHTML = '';
+      const today = startOfDay(new Date());
+
+      // 前面空白填上灰日期（上月）
+      for (let i = firstDow - 1; i >= 0; i--) {
+        const d = new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, prevDays - i);
+        const cell = document.createElement('button');
+        cell.type = 'button';
+        cell.className = 'dp-day dp-day-out';
+        cell.textContent = d.getDate();
+        cell.addEventListener('click', () => onPickDay(d));
+        daysGrid.appendChild(cell);
+      }
+      // 当月
+      for (let day = 1; day <= daysInMonth; day++) {
+        const d = new Date(calMonth.getFullYear(), calMonth.getMonth(), day);
+        const cell = document.createElement('button');
+        cell.type = 'button';
+        cell.className = 'dp-day';
+        cell.textContent = day;
+        if (sameDay(d, today)) cell.classList.add('dp-day-today');
+        if (sameDay(d, checkInDate)) cell.classList.add('dp-day-start');
+        if (sameDay(d, checkOutDate)) cell.classList.add('dp-day-end');
+        if (checkInDate && checkOutDate && d > checkInDate && d < checkOutDate) {
+          cell.classList.add('dp-day-in-range');
+        }
+        cell.addEventListener('click', () => onPickDay(d));
+        daysGrid.appendChild(cell);
+      }
+      // 后面补位（下月）
+      const totalCells = daysGrid.children.length;
+      const remain = (7 - (totalCells % 7)) % 7;
+      for (let i = 1; i <= remain; i++) {
+        const d = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, i);
+        const cell = document.createElement('button');
+        cell.type = 'button';
+        cell.className = 'dp-day dp-day-out';
+        cell.textContent = d.getDate();
+        cell.addEventListener('click', () => onPickDay(d));
+        daysGrid.appendChild(cell);
+      }
+    }
+
+    function onPickDay(d) {
+      d = startOfDay(d);
+      const today = startOfDay(new Date());
+      // 不允许选择今天之前的日期
+      if (d < today) return;
+      if (pickingSide === 'in' || !checkInDate || (checkInDate && checkOutDate)) {
+        // 开始新一段选择
+        checkInDate = d;
+        checkOutDate = null;
+        pickingSide = 'out';
+        // 如果点了"过去"月（极少见），同步切月
+        if (d.getMonth() !== calMonth.getMonth() || d.getFullYear() !== calMonth.getFullYear()) {
+          calMonth = new Date(d);
+        }
+      } else {
+        // 选离店
+        if (d <= checkInDate) {
+          // 选得早于等于入住，重新开始
+          checkInDate = d;
+          checkOutDate = null;
+          pickingSide = 'out';
+        } else {
+          checkOutDate = d;
+          pickingSide = 'in';
+        }
+      }
+      updateDateText();
+      renderCal();
+    }
+
+    function setPickingSide(side) {
+      pickingSide = side;
+      pickBtns.forEach(b => b.classList.toggle('active', b.dataset.pick === side));
+    }
+
+    pickBtns.forEach(b => b.addEventListener('click', () => {
+      setPickingSide(b.dataset.pick);
+    }));
+
+    prevMonthBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1);
+      renderCal();
+    });
+    nextMonthBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1);
+      renderCal();
+    });
+
+    // 点击面板内空白不关闭（在 date-panel 容器里）
+    datePanel.addEventListener('click', (e) => e.stopPropagation());
+
+    function renderLocOptions(filter = '') {
+      locOptions.innerHTML = '';
+      const f = filter.trim().toLowerCase();
+      const names = locNamesOf(currentScope);
+      const sorted = buildSortedOptions(names, currentScope);
+      // 当前 scope 下所有可选名称（供"全选/清除"判定）
+      const allInScope = new Set(sorted);
+      // 选中集合只保留仍属于当前 scope 的名称（切换 scope 时已重置，此处兜底）
+      for (const n of Array.from(selectedLocs)) {
+        if (!allInScope.has(n)) selectedLocs.delete(n);
+      }
+      for (const n of sorted) {
+        if (f && !n.toLowerCase().includes(f)) continue;
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'loc-opt';
+        if (selectedLocs.has(n)) item.classList.add('selected');
+        item.textContent = n;
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          // 多选：点击 toggle 选中态，不关闭面板
+          if (selectedLocs.has(n)) selectedLocs.delete(n);
+          else selectedLocs.add(n);
+          updateLocText();
+          renderLocOptions(locSearch.value);
+        });
+        locOptions.appendChild(item);
+      }
+      // 更新全选/清除按钮与提示
+      const allSelected = sorted.length > 0 && sorted.every(n => selectedLocs.has(n));
+      locAllBtn.textContent = allSelected ? '取消全选' : '全选';
+      locClearBtn.disabled = selectedLocs.size === 0;
+      locToolsHint.textContent = `已选 ${selectedLocs.size} 个，可多选`;
+    }
+
+    // 全选/清除当前 scope 下的所有地点
+    locAllBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const names = locNamesOf(currentScope);
+      const allSelected = names.every(n => selectedLocs.has(n));
+      if (allSelected) selectedLocs.clear();
+      else names.forEach(n => selectedLocs.add(n));
+      updateLocText();
+      renderLocOptions(locSearch.value);
+    });
+    locClearBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectedLocs.clear();
+      updateLocText();
+      renderLocOptions(locSearch.value);
+    });
+
+    async function loadData() {
+      // 每次调用都重新向服务器拉取城市列表（no-store 禁用缓存），实现“每次发起请求”。
+      try {
+        const res = await fetch(CITIES_JSON_URL, { cache: 'no-store' });
+        if (res.ok) CITIES_DATA = await res.json();
+      } catch (e) {
+        // 拉取失败则保留 FALLBACK_DATA，UI 仍可正常使用
+      }
+    }
+
+    async function openLocPanel() {
+      locPanel.hidden = false;
+      locSearch.value = '';
+      renderLocOptions();                 // 先用已有/fallback 数据渲染
+      datePanel.hidden = true;
+      // 延迟到弹层完成首帧绘制后再 focus，且 preventScroll 禁止自动滚动祖先容器，
+      // 避免聚焦瞬间浏览器把刚显示的弹层/胶囊"顶到上方再弹回"
+      requestAnimationFrame(() => locSearch.focus({ preventScroll: true }));
+      await loadData();                    // 每次打开都发起请求
+      renderLocOptions(locSearch.value);  // 拉到最新数据后刷新列表
+    }
+    function closeLocPanel() { locPanel.hidden = true; }
+    function openDatePanel() {
+      datePanel.hidden = false;
+      locPanel.hidden = true;
+      setPickingSide(checkOutDate ? 'in' : 'in');
+      // 跳到入住日所在月
+      if (checkInDate) {
+        calMonth = new Date(checkInDate.getFullYear(), checkInDate.getMonth(), 1);
+      }
+      renderCal();
+      updateDateText();
+    }
+    function closeDatePanel() { datePanel.hidden = true; }
+    function closeAllPanels() { closeLocPanel(); closeDatePanel(); }
+
+    locBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      locPanel.hidden ? openLocPanel() : closeLocPanel();
+    });
+    dateBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      datePanel.hidden ? openDatePanel() : closeDatePanel();
+    });
+    locSearch.addEventListener('input', () => renderLocOptions(locSearch.value));
+
+    scopeTabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        const s = tab.dataset.scope;
+        if (s === currentScope) return;
+        currentScope = s;
+        scopeTabs.forEach(t => t.classList.toggle('active', t.dataset.scope === s));
+        // 切换城市/省份范围时重置选中：默认选中该项范围的默认地点
+        selectedLocs = new Set([s === 'province' ? DEFAULT_PROVINCE : DEFAULT_CITY]);
+        updateLocText();
+        formScope.value = s;
+        syncLocationInputs();
+        if (!locPanel.hidden) renderLocOptions();
+      });
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!locPanel.contains(e.target) && !datePanel.contains(e.target) &&
+          e.target !== locBtn && e.target !== dateBtn &&
+          !locBtn.contains(e.target) && !dateBtn.contains(e.target)) {
+        closeAllPanels();
+      }
+    });
+
+    // 把当前选中的多个地点同步为表单里多个同名 hidden input（name=location）
+    function syncLocationInputs() {
+      // 保留首个 data-form-location 作为基准，其余移除后按选中集合重建
+      const all = Array.from(form.querySelectorAll('input[name="location"]'));
+      all.forEach((el, i) => { if (i > 0) el.remove(); });
+      formLocation.value = selectedLocs.size ? Array.from(selectedLocs)[0] : '';
+      selectedLocs.forEach((loc, i) => {
+        if (i === 0) return; // 首个复用 data-form-location
+        const inp = document.createElement('input');
+        inp.type = 'hidden';
+        inp.name = 'location';
+        inp.value = loc;
+        formLocation.parentNode.appendChild(inp);
+      });
+    }
+
+    form.addEventListener('submit', (e) => {
+      if (selectedLocs.size === 0) {
+        e.preventDefault();
+        alert('请至少选择一个目的地。');
+        return;
+      }
+      if (!checkInDate || !checkOutDate) {
+        e.preventDefault();
+        alert('请选择入住和离店日期。');
+        return;
+      }
+      if (checkOutDate <= checkInDate) {
+        e.preventDefault();
+        alert('离店日期必须晚于入住日期。');
+        return;
+      }
+      formScope.value = currentScope;
+      syncLocationInputs();
+      formCheckin.value = fmtIso(checkInDate);
+      formCheckout.value = fmtIso(checkOutDate);
+    });
+
+    // 白色胶囊及其弹层不使用任何波纹动画：点击只做纯显隐切换，
+    // 不向 DOM 插入任何元素，杜绝布局抖动。磁吸按钮的波纹见下方 createMagneticRipple。
+
+    setDefaultDates();
+    formScope.value = 'city';
+    selectedLocs = new Set([DEFAULT_CITY]);
+    updateLocText();
+    syncLocationInputs();
+    renderLocOptions();
+
+    // ===== 磁吸按钮交互 =====
+    (function initMagneticButtons() {
+      const magneticBtns = document.querySelectorAll('.magnetic-btn');
+
+      magneticBtns.forEach(btn => {
+        const inner = btn.querySelector('.magnetic-btn__inner');
+        if (!inner) return;
+
+        // 计算磁吸位移：鼠标越近，吸力越强
+        function handleMove(e) {
+          const rect = btn.getBoundingClientRect();
+          const centerX = rect.left + rect.width / 2;
+          const centerY = rect.top + rect.height / 2;
+
+          const distX = e.clientX - centerX;
+          const distY = e.clientY - centerY;
+          const distance = Math.sqrt(distX * distX + distY * distY);
+
+          // 磁吸作用半径：按钮尺寸的 10 倍（活动范围进一步加大）
+          const radius = Math.max(rect.width, rect.height) * 10;
+
+          if (distance < radius) {
+            // 平滑吸力曲线：平方缓入，远处变化柔和、贴近时吸附感更强
+            const t = 1 - distance / radius;
+            const pull = t * t;
+            // 按钮整体最大位移量（px）—— 活动范围，即黑色按钮能移动的最远距离
+            const btnMaxMove = 48;
+            // 内部文字额外位移量（px）
+            const textMaxMove = 70;
+
+            const btnMoveX = distX * pull * (btnMaxMove / radius);
+            const btnMoveY = distY * pull * (btnMaxMove / radius);
+            const textMoveX = distX * pull * (textMaxMove / radius);
+            const textMoveY = distY * pull * (textMaxMove / radius);
+
+            btn.style.transform = `translate(${btnMoveX}px, ${btnMoveY}px)`;
+            inner.style.transform = `translate(${textMoveX}px, ${textMoveY}px)`;
+          } else {
+            btn.style.transform = 'translate(0, 0)';
+            inner.style.transform = 'translate(0, 0)';
+          }
+        }
+
+        function handleLeave() {
+          btn.style.transform = 'translate(0, 0)';
+          inner.style.transform = 'translate(0, 0)';
+        }
+
+        // 磁吸按钮点击水波纹
+        function createMagneticRipple(e) {
+          const ripple = document.createElement('span');
+          ripple.className = 'ripple';
+          const rect = btn.getBoundingClientRect();
+          const size = Math.max(rect.width, rect.height);
+          ripple.style.width = ripple.style.height = size + 'px';
+          ripple.style.left = (e.clientX - rect.left - size / 2) + 'px';
+          ripple.style.top = (e.clientY - rect.top - size / 2) + 'px';
+          btn.appendChild(ripple);
+          setTimeout(() => ripple.remove(), 600);
+        }
+
+        // 在按钮周围较大范围监听移动，实现"接近即吸引"
+        document.addEventListener('mousemove', handleMove);
+        btn.addEventListener('mouseleave', handleLeave);
+        btn.addEventListener('click', createMagneticRipple);
+      });
+    })();
+  })();
+</script>
