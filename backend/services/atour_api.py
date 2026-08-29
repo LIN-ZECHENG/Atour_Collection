@@ -478,6 +478,26 @@ def _province_short(loc: str) -> str:
     return loc
 
 
+def _dedup_records(existing: list[dict], incoming: list[dict]) -> list[dict]:
+    """按 chainId 合并去重（缺失时回退到「名称|位置」），消除跨城市/跨地点重复酒店。
+
+    重复的 chainId 会导致地图气泡 key 冲突——Leaflet 壳以 key 为对象属性，
+    重复 key 相互覆盖后遗留无法隐藏的孤儿气泡。
+    """
+    known = {
+        (f"cid:{r.get('chainId')}" if r.get("chainId") not in (None, "") else f"name:{r.get('酒店名称', '')}|{r.get('位置', '')}")
+        for r in existing
+    }
+    out = list(existing)
+    for r in incoming:
+        cid = r.get("chainId")
+        key = f"cid:{cid}" if cid not in (None, "") else f"name:{r.get('酒店名称', '')}|{r.get('位置', '')}"
+        if key not in known:
+            known.add(key)
+            out.append(r)
+    return out
+
+
 def fetch_atour_prices(
     location: str,
     start_date: date,
@@ -508,24 +528,20 @@ def fetch_atour_prices(
         if not cities:
             raise ValueError(f"暂不支持省份「{short}」，请改用具体城市查询，或在省份列表中选择。")
         records: list[dict[str, Any]] = []
-        seen: set[str] = set()
         failed = 0
         for city in cities:
             def _emit_prov(raw, _city=city):
                 if on_progress is not None:
-                    merged = records + [_normalize_hotel(h) for h in raw]
-                    on_progress(merged, f"{_city}：已加载 {len(raw)} 家（累计 {len(merged)} 家）…")
+                    # 增量推送同样去重：跨城市会重复返回同一酒店，不去重会致地图气泡重复 key。
+                    dedup = _dedup_records(records, [_normalize_hotel(h) for h in raw])
+                    on_progress(dedup, f"{_city}：已加载 {len(raw)} 家（累计 {len(dedup)} 家）…")
             try:
                 sub = _query_chain(city, start_date, end_date, token, on_page=_emit_prov)
             except AtourAPIError:
         
                 failed += 1
                 continue
-            for r in sub:
-                key = r["酒店名称"]
-                if key not in seen:
-                    seen.add(key)
-                    records.append(r)
+            records = _dedup_records(records, sub)
             if on_progress is not None:
                 on_progress(records, f"已完成 {city}（累计 {len(records)} 家）")
         if not records and failed:

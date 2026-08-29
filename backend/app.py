@@ -7,21 +7,12 @@ import uuid
 from datetime import date, timedelta
 from typing import Any
 
-import sys
-import traceback
-
 import pandas as pd
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
-try:
-    from pypinyin import lazy_pinyin, Style
-except Exception:  # 拼音库缺失时回退到按首字字符排序
-    lazy_pinyin = None
-    Style = None
-
-from services.atour_api import ATOUR_TOKEN, AtourAPIError, fetch_atour_prices, get_atour_cities
+from services.atour_api import ATOUR_TOKEN, AtourAPIError, _dedup_records, fetch_atour_prices
 
 
 st.set_page_config(page_title="Atour 亚朵比价", page_icon="🏨", layout="wide", initial_sidebar_state="collapsed")
@@ -70,85 +61,6 @@ button[kind="primary"]:hover, button[data-testid="baseButton-primary"]:hover{
 </style>
 """)
 
-PRICE_COLUMNS = ["铂金会员价"]
-
-# 排序候选
-_SORT_FIELDS = ["铂金会员价", "开业时间"]
-_SORT_OPTIONS = [f"{f} {d}" for f in _SORT_FIELDS for d in ("升序", "降序")]
-
-# 酒店类型筛选候选
-HOTEL_TYPE_OPTIONS = ["亚朵", "亚朵V3.6", "亚朵S", "亚朵X", "亚朵轻居", "亚朵见野"]
-
-
-def _open_date_sort_key(value: object):
-    if not isinstance(value, str):
-        return None
-    m = re.search(r"(\d{4})年(?:(\d{1,2})月)?", value)
-    if not m:
-        return None
-    return int(m.group(1)) * 12 + int(m.group(2) or 0)
-
-
-def _pinyin_key(name: str) -> str:
-    if lazy_pinyin is not None and name:
-        return "".join(lazy_pinyin(name))
-    return name
-
-
-# 城市/省份列表
-FALLBACK_CITIES = ["北京", "上海", "广州", "深圳", "杭州", "成都", "南京", "武汉", "西安", "重庆"]
-FALLBACK_PROVINCES = ["北京", "上海", "广东", "浙江", "江苏", "四川", "湖北", "陕西", "重庆", "福建", "山东", "湖南"]
-
-try:
-    _PROVINCE_MAP = get_atour_cities()
-except Exception:
-    _PROVINCE_MAP = None
-
-if _PROVINCE_MAP:
-    ALL_CITIES = sorted({c for cs in _PROVINCE_MAP.values() for c in cs}, key=_pinyin_key)
-    PROVINCES = sorted(_PROVINCE_MAP.keys(), key=_pinyin_key)
-else:
-    ALL_CITIES = sorted(FALLBACK_CITIES, key=_pinyin_key)
-    PROVINCES = sorted(FALLBACK_PROVINCES, key=_pinyin_key)
-
-
-def _pinyin_initial(name: str) -> str:
-    if lazy_pinyin is not None and name:
-        letters = lazy_pinyin(name, style=Style.FIRST_LETTER)
-        if letters:
-            return letters[0].upper()
-    return (name[0].upper() if name else "?")
-
-
-# 分隔符前缀
-_DIVIDER_PREFIX = "── "
-
-
-def _build_grouped_options(names: list[str]) -> list[str]:
-    initials = sorted({_pinyin_initial(n) for n in names})
-    opts: list[str] = []
-    for ini in initials:
-        opts.append(f"{_DIVIDER_PREFIX}{ini} ──")
-        grp = sorted([n for n in names if _pinyin_initial(n) == ini], key=_pinyin_key)
-        opts.extend(grp)
-    return opts
-
-
-def _first_real_index(options: list[str]) -> int:
-    for i, o in enumerate(options):
-        if not o.startswith(_DIVIDER_PREFIX):
-            return i
-    return 0
-
-
-CITY_OPTIONS = _build_grouped_options(ALL_CITIES) if ALL_CITIES else []
-PROVINCE_OPTIONS = _build_grouped_options(PROVINCES) if PROVINCES else []
-
-
-def format_price(value: object) -> str:
-    return "—" if pd.isna(value) else f"¥{float(value):,.2f}"
-
-
 def _city_of(value: object) -> str:
     return str(value).split("/")[0] if isinstance(value, str) and value else ""
 
@@ -165,6 +77,62 @@ def _open_date_short(value: object) -> str:
         return "—"
     return f"{m.group(1)}.{m.group(2)}" if m.group(2) else m.group(1)
 
+
+# ===== 地图壳 / 列表壳 共用片段（避免重复维护） =====
+
+# GCJ-02 → WGS-84 坐标转换 JS（Leaflet / MapKit 壳共用）
+_GCJ2WGS_JS = """\
+const PI=Math.PI, A=6378245.0, EE=0.00669342162296594323;
+function outOfChina(lng,lat){return !(lng>73.66&&lng<135.05&&lat>3.86&&lat<53.55);}
+function tLat(x,y){let r=-100+2*x+3*y+.2*y*y+.1*x*y+.2*Math.sqrt(Math.abs(x));
+  r+=(20*Math.sin(6*x*PI)+20*Math.sin(2*x*PI))*2/3;
+  r+=(20*Math.sin(y*PI)+40*Math.sin(y/3*PI))*2/3;
+  r+=(160*Math.sin(y/12*PI)+320*Math.sin(y*PI/30))*2/3;return r;}
+function tLng(x,y){let r=300+x+2*y+.1*x*x+.1*x*y+.1*Math.sqrt(Math.abs(x));
+  r+=(20*Math.sin(6*x*PI)+20*Math.sin(2*x*PI))*2/3;
+  r+=(20*Math.sin(x*PI)+40*Math.sin(x/3*PI))*2/3;
+  r+=(150*Math.sin(x/12*PI)+300*Math.sin(x/30*PI))*2/3;return r;}
+function gcjToWgs(lng,lat){
+  if(outOfChina(lng,lat))return[lng,lat];
+  let dLat=tLat(lng-105,lat-35),dLng=tLng(lng-105,lat-35);
+  const rL=lat/180*PI;let m=Math.sin(rL);m=1-EE*m*m;const sm=Math.sqrt(m);
+  dLat=(dLat*180)/((A*(1-EE))/(m*sm)*PI);
+  dLng=(dLng*180)/(A/sm*Math.cos(rL)*PI);
+  return[lng*2-(lng+dLng),lat*2-(lat+dLat)];
+}
+"""
+
+# 价格气泡公共 CSS（外层 .price-bubble 的字体/阴影差异保留在各壳）
+_PRICE_BUBBLE_CSS = """\
+.price-bubble .pb{
+  background:#1e6fff;color:#fff;border-radius:10px;
+  padding:5px 12px 6px;min-width:68px;
+  display:flex;flex-direction:column;align-items:center;line-height:1.25;
+  border:1px solid #1e6fff;box-sizing:border-box;transition:transform .15s;
+  white-space:nowrap;text-align:center;position:relative;overflow:hidden;
+  animation:bubble-in .22s ease-out}
+.price-bubble .pb .t{font-size:10px;font-weight:500;opacity:.82;letter-spacing:.3px}
+.price-bubble .pb .p{font-size:15px;font-weight:700;margin-top:1px}
+.price-bubble .pb .d{font-size:9.5px;font-weight:500;opacity:.75;margin-top:1px}
+.price-bubble.full .pb{background:#fff;color:#1e6fff;border:1.5px solid #1e6fff}
+.price-bubble:hover .pb{transform:scale(1.08)}
+.price-bubble .ripple{
+  position:absolute;border-radius:50%;transform:scale(0);
+  animation:ripple-animation .6s linear;
+  background:rgba(255,255,255,.35);pointer-events:none;
+}
+/* 气泡出现 / 消失动画 */
+@keyframes bubble-in{from{transform:scale(.5);opacity:0}to{transform:scale(1);opacity:1}}
+.price-bubble.out .pb{animation:bubble-out .18s ease-in forwards}
+@keyframes bubble-out{to{transform:scale(.6);opacity:0}}
+"""
+
+# 波纹动画 keyframes（地图壳 / 列表壳共用）
+_RIPPLE_KEYFRAMES_CSS = """\
+@keyframes ripple-animation{
+  to{ transform:scale(4); opacity:0; }
+}
+"""
 
 # 地图（Leaflet + 高德 Amap 瓦片）
 _LEAFLET_AMAP_SHELL = """<!DOCTYPE html>
@@ -193,26 +161,8 @@ html,body{margin:0;padding:0;height:100%}
 .price-bubble{display:inline-block;cursor:pointer;user-select:none;
   font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;
   filter:drop-shadow(0 2px 5px rgba(0,0,0,.22));position:relative;overflow:hidden;border-radius:10px}
-.price-bubble .pb{
-  background:#1e6fff;color:#fff;border-radius:10px;
-  padding:5px 12px 6px;min-width:68px;
-  display:flex;flex-direction:column;align-items:center;line-height:1.25;
-  border:1px solid #1e6fff;box-sizing:border-box;transition:transform .15s;
-  white-space:nowrap;text-align:center;position:relative;overflow:hidden}
-.price-bubble .pb .t{font-size:10px;font-weight:500;opacity:.82;letter-spacing:.3px}
-.price-bubble .pb .p{font-size:15px;font-weight:700;margin-top:1px}
-.price-bubble .pb .d{font-size:9.5px;font-weight:500;opacity:.75;margin-top:1px}
-.price-bubble.full .pb{background:#fff;color:#1e6fff;border:1.5px solid #1e6fff}
-.price-bubble:hover .pb{transform:scale(1.08)}
-/* 波纹动画 */
-@keyframes ripple-animation{
-  to{ transform:scale(4); opacity:0; }
-}
-.price-bubble .ripple{
-  position:absolute;border-radius:50%;transform:scale(0);
-  animation:ripple-animation .6s linear;
-  background:rgba(255,255,255,.35);pointer-events:none;
-}
+@@PRICE_BUBBLE_CSS@@
+@@RIPPLE_KEYFRAMES_CSS@@
 /* iOS 风格控件：右下角缩放、淡白底 */
 .leaflet-bottom.leaflet-right{margin:14px}
 .leaflet-control-zoom{border:none!important;box-shadow:0 1px 4px rgba(0,0,0,.18);border-radius:9px;overflow:hidden}
@@ -234,24 +184,7 @@ window.__INIT_POINTS__ = @@INIT_POINTS@@;
 window.__INIT_FIT__ = @@INIT_FIT@@;
 
 // GCJ-02 → WGS-84 转换（消除"中国地图偏移"，亚朵 API 返回 GCJ-02，瓦片也是 GCJ-02）
-const PI=Math.PI, A=6378245.0, EE=0.00669342162296594323;
-function outOfChina(lng,lat){return !(lng>73.66&&lng<135.05&&lat>3.86&&lat<53.55);}
-function tLat(x,y){let r=-100+2*x+3*y+.2*y*y+.1*x*y+.2*Math.sqrt(Math.abs(x));
-  r+=(20*Math.sin(6*x*PI)+20*Math.sin(2*x*PI))*2/3;
-  r+=(20*Math.sin(y*PI)+40*Math.sin(y/3*PI))*2/3;
-  r+=(160*Math.sin(y/12*PI)+320*Math.sin(y*PI/30))*2/3;return r;}
-function tLng(x,y){let r=300+x+2*y+.1*x*x+.1*x*y+.1*Math.sqrt(Math.abs(x));
-  r+=(20*Math.sin(6*x*PI)+20*Math.sin(2*x*PI))*2/3;
-  r+=(20*Math.sin(x*PI)+40*Math.sin(x/3*PI))*2/3;
-  r+=(150*Math.sin(x/12*PI)+300*Math.sin(x/30*PI))*2/3;return r;}
-function gcjToWgs(lng,lat){
-  if(outOfChina(lng,lat))return[lng,lat];
-  let dLat=tLat(lng-105,lat-35),dLng=tLng(lng-105,lat-35);
-  const rL=lat/180*PI;let m=Math.sin(rL);m=1-EE*m*m;const sm=Math.sqrt(m);
-  dLat=(dLat*180)/((A*(1-EE))/(m*sm)*PI);
-  dLng=(dLng*180)/(A/sm*Math.cos(rL)*PI);
-  return[lng*2-(lng+dLng),lat*2-(lat+dLat)];
-}
+@@GCJ2WGS_JS@@
 
 // 高德地图瓦片（GCJ-02 坐标系；style=8 标准浅色，接近 iOS Apple Maps 观感）
 window.__tileLayer = L.tileLayer(
@@ -282,12 +215,22 @@ window.__focusedKey = null;
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 
+// 气泡退场：加 .out 类播放缩小/淡出动画，动画结束后真正从地图移除（避免动画被打断）。
+window.__bubbleOut = function(marker, removeFn) {
+  if (!marker || marker._atourLeaving) return;
+  marker._atourLeaving = true;
+  const el = marker.getElement ? marker.getElement() : null;
+  if (el) el.classList.add('out');
+  setTimeout(function(){ marker._atourLeaving = false; removeFn(); }, 180);
+};
+
 // 控制器调用的唯一入口：整体替换气泡集合。fit=true 时 fitBounds（仅当数量变化时由壳外控制）。
 // 同时保存全量数据到 __allPoints，供取消聚焦（__clearFocus）时恢复全部气泡。
 window.__setBubbles = function(points, fit) {
   window.__allPoints = points || [];
   Object.keys(window.__bubbles).forEach(function(k){
-    try { window.__atourMap.removeLayer(window.__bubbles[k]); } catch(e){}
+    const m = window.__bubbles[k];
+    if (m) window.__bubbleOut(m, function(){ try { window.__atourMap.removeLayer(m); } catch(e){} });
     delete window.__bubbles[k];
   });
   (points || []).forEach(function(p){
@@ -356,7 +299,7 @@ window.__applyFocus = function() {
     const m = window.__bubbles[mk];
     if (!m) return;
     if (mk === k) { if (!window.__atourMap.hasLayer(m)) m.addTo(window.__atourMap); }
-    else { if (window.__atourMap.hasLayer(m)) window.__atourMap.removeLayer(m); }
+    else { if (window.__atourMap.hasLayer(m)) window.__bubbleOut(m, function(){ window.__atourMap.removeLayer(m); }); }
   });
 };
 // 列表行点击触发的焦点：隐藏其他气泡 + 缩放到该酒店周边 10km 范围
@@ -387,7 +330,7 @@ window.__filterBubbles = function(keys) {
     if (visible) {
       if (!window.__atourMap.hasLayer(m)) m.addTo(window.__atourMap);
     } else {
-      if (window.__atourMap.hasLayer(m)) window.__atourMap.removeLayer(m);
+      if (window.__atourMap.hasLayer(m)) window.__bubbleOut(m, function(){ window.__atourMap.removeLayer(m); });
     }
   });
 };
@@ -421,26 +364,8 @@ html,body{margin:0;padding:0;height:100%}
 .price-bubble{display:inline-block;cursor:pointer;user-select:none;
   font-family:-apple-system,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;
   filter:drop-shadow(0 2px 5px rgba(0,0,0,.25))}
-.price-bubble .pb{
-  background:#1e6fff;color:#fff;border-radius:10px;
-  padding:5px 12px 6px;min-width:68px;
-  display:flex;flex-direction:column;align-items:center;line-height:1.25;
-  border:1px solid #1e6fff;box-sizing:border-box;transition:transform .15s;
-  white-space:nowrap;text-align:center;position:relative;overflow:hidden}
-.price-bubble .pb .t{font-size:10px;font-weight:500;opacity:.82;letter-spacing:.3px}
-.price-bubble .pb .p{font-size:15px;font-weight:700;margin-top:1px}
-.price-bubble .pb .d{font-size:9.5px;font-weight:500;opacity:.75;margin-top:1px}
-.price-bubble.full .pb{background:#fff;color:#1e6fff;border:1.5px solid #1e6fff}
-.price-bubble:hover .pb{transform:scale(1.08)}
-/* 波纹动画 */
-@keyframes ripple-animation{
-  to{ transform:scale(4); opacity:0; }
-}
-.price-bubble .ripple{
-  position:absolute;border-radius:50%;transform:scale(0);
-  animation:ripple-animation .6s linear;
-  background:rgba(255,255,255,.35);pointer-events:none;
-}
+@@PRICE_BUBBLE_CSS@@
+@@RIPPLE_KEYFRAMES_CSS@@
 /* 地图边缘渐变：四边向内渐隐到纯白页面底色，范围 14% 让过渡更柔和 */
 .map-fade{position:absolute;inset:0;pointer-events:none;z-index:1000;
   background:
@@ -463,24 +388,7 @@ window.__annotations = [];
 window.__focusedKey = null;
 
 // GCJ-02 → WGS-84 转换（消除"中国地图偏移"；Apple 中国地图数据由高德提供）
-const PI=Math.PI, A=6378245.0, EE=0.00669342162296594323;
-function outOfChina(lng,lat){return !(lng>73.66&&lng<135.05&&lat>3.86&&lat<53.55);}
-function tLat(x,y){let r=-100+2*x+3*y+.2*y*y+.1*x*y+.2*Math.sqrt(Math.abs(x));
-  r+=(20*Math.sin(6*x*PI)+20*Math.sin(2*x*PI))*2/3;
-  r+=(20*Math.sin(y*PI)+40*Math.sin(y/3*PI))*2/3;
-  r+=(160*Math.sin(y/12*PI)+320*Math.sin(y*PI/30))*2/3;return r;}
-function tLng(x,y){let r=300+x+2*y+.1*x*x+.1*x*y+.1*Math.sqrt(Math.abs(x));
-  r+=(20*Math.sin(6*x*PI)+20*Math.sin(2*x*PI))*2/3;
-  r+=(20*Math.sin(x*PI)+40*Math.sin(x/3*PI))*2/3;
-  r+=(150*Math.sin(x/12*PI)+300*Math.sin(x/30*PI))*2/3;return r;}
-function gcjToWgs(lng,lat){
-  if(outOfChina(lng,lat))return[lng,lat];
-  let dLat=tLat(lng-105,lat-35),dLng=tLng(lng-105,lat-35);
-  const rL=lat/180*PI;let m=Math.sin(rL);m=1-EE*m*m;const sm=Math.sqrt(m);
-  dLat=(dLat*180)/((A*(1-EE))/(m*sm)*PI);
-  dLng=(dLng*180)/(A/sm*Math.cos(rL)*PI);
-  return[lng*2-(lng+dLng),lat*2-(lat+dLat)];
-}
+@@GCJ2WGS_JS@@
 
 // 初始化 MapKit JS（token 由后端环境变量 MAPKIT_TOKEN 注入）
 mapkit.init({
@@ -493,8 +401,10 @@ class PriceAnnotation extends mapkit.Annotation {
   constructor(coordinate, opts) {
     super(coordinate, opts);
     this.pdata = opts.pdata || {};
+    this._el = null;  // 缓存 element，供退场动画与移除时操作实际显示元素
   }
   get element() {
+    if (this._el) return this._el;
     const wrap = document.createElement('div');
     wrap.className = 'price-bubble' + (this.pdata.full ? ' full' : '');
     const pb = document.createElement('div'); pb.className = 'pb';
@@ -530,16 +440,26 @@ class PriceAnnotation extends mapkit.Annotation {
         }
       } catch(e) {}
     }.bind(this));
+    this._el = wrap;
     return wrap;
   }
 }
+
+// 气泡退场：加 .out 类播放缩小/淡出动画，动画结束后真正移除（避免动画被打断）。
+window.__bubbleOut = function(ann, removeFn) {
+  if (!ann || ann._atourLeaving) return;
+  ann._atourLeaving = true;
+  if (ann.element) ann.element.classList.add('out');
+  setTimeout(function(){ ann._atourLeaving = false; removeFn(); }, 180);
+};
 
 // 控制器调用的唯一入口：整体替换气泡集合；保存全量数据到 __allPoints 供取消聚焦恢复
 window.__setBubbles = function(points, fit) {
   if (!window.__atourMap) return;
   window.__allPoints = points || [];
-  if (window.__annotations.length) { window.__atourMap.removeAnnotations(window.__annotations); }
+  const _old = window.__annotations;
   window.__annotations = [];
+  _old.forEach(function(ann){ window.__bubbleOut(ann, function(){ try { window.__atourMap.removeAnnotation(ann); } catch(e){} }); });
   (points || []).forEach(function(p){
     const c = gcjToWgs(p.lng, p.lat);
     const ann = new PriceAnnotation(new mapkit.Coordinate(c[1], c[0]), { pdata: p });
@@ -557,12 +477,17 @@ window.__applyFocus = function() {
   if (!window.__focusedKey || !window.__atourMap) return;
   const k = window.__focusedKey;
   const keep = [];
+  const _old = window.__annotations;
   window.__annotations.forEach(function(ann){
     if (ann.pdata && ann.pdata.key === k) keep.push(ann);
   });
-  if (window.__annotations.length) window.__atourMap.removeAnnotations(window.__annotations);
   window.__annotations = [];
+  _old.forEach(function(ann){
+    if (ann.pdata && ann.pdata.key === k) return;
+    window.__bubbleOut(ann, function(){ try { window.__atourMap.removeAnnotation(ann); } catch(e){} });
+  });
   keep.forEach(function(ann){
+    ann._atourLeaving = false;
     window.__atourMap.addAnnotation(ann);
     window.__annotations.push(ann);
   });
@@ -597,7 +522,7 @@ window.__filterBubbles = function(keys) {
     if (visible) {
       if (window.__atourMap.annotations.indexOf(ann) < 0) window.__atourMap.addAnnotation(ann);
     } else {
-      if (window.__atourMap.annotations.indexOf(ann) >= 0) window.__atourMap.removeAnnotation(ann);
+      if (window.__atourMap.annotations.indexOf(ann) >= 0) window.__bubbleOut(ann, function(){ window.__atourMap.removeAnnotation(ann); });
     }
   });
 };
@@ -691,6 +616,9 @@ def _build_map_shell(
         .replace("@@ZOOM@@", str(zoom))
         .replace("@@INIT_POINTS@@", pts_json)
         .replace("@@INIT_FIT@@", "true" if init_fit else "false")
+        .replace("@@GCJ2WGS_JS@@", _GCJ2WGS_JS)
+        .replace("@@PRICE_BUBBLE_CSS@@", _PRICE_BUBBLE_CSS)
+        .replace("@@RIPPLE_KEYFRAMES_CSS@@", _RIPPLE_KEYFRAMES_CSS)
     )
 
 
@@ -883,9 +811,7 @@ _THIRDGINGER_CSS = """
 .tg-foot{margin-top:18px;font-size:11px;color:#aaa;letter-spacing:.5px;text-align:right;text-transform:uppercase}
 .tg-no-data{padding:36px 0;text-align:center;color:#888;font-size:14px}
 /* 波纹动画 */
-@keyframes ripple-animation{
-  to{ transform:scale(4); opacity:0; }
-}
+@@RIPPLE_KEYFRAMES_CSS@@
 .tg-row .ripple, .tg-dd-btn .ripple, .tg-search .ripple, .tg-filters select .ripple,
 .tg-dd-all .ripple, .tg-dd-opts label .ripple{
   position:absolute;border-radius:50%;transform:scale(0);
@@ -893,7 +819,10 @@ _THIRDGINGER_CSS = """
   background:rgba(30,111,255,.15);pointer-events:none;
 }
 </style>
-"""
+""" .replace("@@RIPPLE_KEYFRAMES_CSS@@", _RIPPLE_KEYFRAMES_CSS)
+
+
+
 
 
 def _safe(s: object) -> str:
@@ -1475,170 +1404,7 @@ def _render_thirdginger_list(data: "pd.DataFrame") -> None:
     components.html(_build_thirdginger_list_html(data), height=720)
 
 
-def render_results(records: list[dict]) -> None:
-    data = pd.DataFrame(records)
-    if data.empty:
-        st.info("未查询到酒店或房型。")
-        return
 
-    # 左：类型筛选；右：排序
-    col_filter, col_sort = st.columns(2)
-    with col_filter:
-        chosen_types = st.multiselect("酒店类型筛选", HOTEL_TYPE_OPTIONS)
-    with col_sort:
-
-        sort_choice = st.selectbox("排序", _SORT_OPTIONS, index=_SORT_OPTIONS.index("开业时间 降序"))
-
-    if chosen_types:
-        data = data[data["酒店类型"].isin(chosen_types)]
-        if data.empty:
-            st.info(f"所选类型（{'、'.join(chosen_types)}）下没有酒店，请调整筛选。")
-            return
-
-    # 位置两级筛选
-    data["_位置市"] = data["位置"].map(_city_of)
-    data["_位置区"] = data["位置"].map(_district_of)
-    col_city, col_dist = st.columns(2)
-    with col_city:
-        city_options = sorted({v for v in data["_位置市"] if v})
-        city_choice = st.multiselect("位置 · 市", city_options, placeholder="全部")
-    with col_dist:
-        if not city_choice:
-            dists = sorted({v for v in data["_位置区"] if v})
-        else:
-            dists = sorted({v for v in data.loc[data["_位置市"].isin(city_choice), "_位置区"] if v})
-        dist_choice = st.multiselect("位置 · 区", dists, placeholder="全部")
-
-    if city_choice:
-        data = data[data["_位置市"].isin(city_choice)]
-    if dist_choice:
-        data = data[data["_位置区"].isin(dist_choice)]
-    data = data.drop(columns=["_位置市", "_位置区"])
-    if data.empty:
-        st.info(f"所选位置（{city_choice} / {dist_choice}）下没有酒店，请调整筛选。")
-        return
-
-    field, _, direction = sort_choice.rpartition(" ")
-    ascending = direction == "升序"
-    if field == "开业时间":
-
-        data["_sort"] = data["开业时间"].map(_open_date_sort_key)
-    else:
-        data["_sort"] = data[field]
-    data = data.sort_values("_sort", ascending=ascending, na_position="last").drop(columns=["_sort"])
-
-    # 双栏：地图左 + 列表右
-    col_map, col_list = st.columns([3, 2], gap="small")
-    with col_map:
-        # 地图气泡联动
-        _emit_map(data.to_dict("records"), fit=True)
-    with col_list:
-        _render_thirdginger_list(data)
-
-
-# 顶部条样式
-_TOP_BAR_CSS = """
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=Inter:wght@400;500;600;700&display=swap');
-.tg-top{display:flex;justify-content:space-between;align-items:center;
-  padding:14px 28px;background:#fff;font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;
-  border-top:1px solid #ececec;border-bottom:1px solid #ececec;margin:0 -1rem}
-.tg-top .logo{font-family:'Cormorant Garamond','PingFang SC',serif;font-style:italic;font-weight:500;
-  font-size:30px;line-height:1;color:#0a0a0a;letter-spacing:-.5px}
-.tg-top .meta{display:flex;gap:48px;align-items:center}
-.tg-top .meta .item{display:flex;flex-direction:column;gap:4px}
-.tg-top .meta .lbl{font-size:10px;letter-spacing:1.6px;color:#888;font-weight:600;text-transform:uppercase;line-height:1}
-.tg-top .meta .val{font-family:'Inter',sans-serif;font-size:14px;color:#111;font-weight:600;letter-spacing:.3px;line-height:1.2}
-.tg-top .meta .val .sep{color:#bbb;margin:0 4px;font-weight:400}
-.tg-top .avatar{width:36px;height:36px;border-radius:50%;border:1.5px solid #1a1a1a;flex-shrink:0;background:#fff;position:relative}
-.tg-top .avatar::after{content:"";position:absolute;inset:6px;border-radius:50%;border:1px solid #1a1a1a}
-</style>
-"""
-
-
-def _fmt_month_eng(d: date) -> str:
-    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    return f"{months[d.month - 1]} {d.day}"
-
-
-
-def _render_filters(records_df: "pd.DataFrame") -> "pd.DataFrame":
-    data = records_df.copy()
-    if data.empty:
-        return data
-    c1, c2, c3, c4 = st.columns(4, gap="small")
-    with c1:
-        chosen_types = st.multiselect("酒店类型筛选", HOTEL_TYPE_OPTIONS, key="_f_types", label_visibility="visible", placeholder="全部")
-    with c2:
-        sort_choice = st.selectbox("排序", _SORT_OPTIONS,
-                                   index=_SORT_OPTIONS.index("开业时间 降序"),
-                                   key="_f_sort")
-    with c3:
-        data["_位置市"] = data["位置"].map(_city_of)
-        city_options = sorted({v for v in data["_位置市"] if v})
-        city_choice = st.multiselect("位置 · 市", city_options, key="_f_city", placeholder="全部")
-    with c4:
-        if not city_choice:
-            dists = sorted({v for v in data["位置"].map(_district_of) if v})
-        else:
-            dists = sorted({v for v in data.loc[data["_位置市"].isin(city_choice), "位置"].map(_district_of) if v})
-        dist_choice = st.multiselect("位置 · 区", dists, key="_f_dist", placeholder="全部")
-
-    if chosen_types:
-        data = data[data["酒店类型"].isin(chosen_types)]
-    if city_choice:
-        data = data[data["_位置市"].isin(city_choice)]
-    if dist_choice:
-        data = data[data["位置"].map(_district_of).isin(dist_choice)]
-    data = data.drop(columns=["_位置市"], errors="ignore")
-
-    field, _, direction = sort_choice.rpartition(" ")
-    ascending = direction == "升序"
-    if field == "开业时间":
-        data["_sort"] = data["开业时间"].map(_open_date_sort_key)
-    else:
-        data["_sort"] = data[field]
-    data = data.sort_values("_sort", ascending=ascending, na_position="last").drop(columns=["_sort"])
-    return data
-
-
-def _render_top_bar(location: str | None, dates) -> None:
-    today = date.today()
-
-    d_start, d_end = today + timedelta(days=1), today + timedelta(days=2)
-    if isinstance(dates, tuple) and len(dates) == 2:
-        a, b = dates[0], dates[1]
-        if isinstance(a, date) and isinstance(b, date):
-            d_start, d_end = a, b
-    dates_str = f"{_fmt_month_eng(d_start)}<span class='sep'>—</span>{_fmt_month_eng(d_end)}"
-    loc_str = location or "—"
-
-    html = (
-        _TOP_BAR_CSS
-        + f"""
-<div class="tg-top">
-  <div class="logo">Atour Hotels</div>
-  <div class="meta">
-    <div class="item"><div class="lbl">Location</div><div class="val">{_safe(loc_str)}</div></div>
-    <div class="item"><div class="lbl">Dates</div><div class="val">{dates_str}</div></div>
-  </div>
-  <div class="avatar"></div>
-</div>
-"""
-    )
-    st.html(html)
-
-
-def _render_brand_inline() -> None:
-    html = (
-        _TOP_BAR_CSS
-        + '<div class="tg-top" style="background:transparent;border:none;margin:0;'
-          'padding:0;justify-content:flex-start;gap:18px">'
-          '<div class="logo">Atour Hotels</div>'
-          '<div class="avatar"></div>'
-          '</div>'
-    )
-    st.html(html)
 
 
 
@@ -1816,13 +1582,13 @@ def main() -> None:
         locations = pending.get("locations") or [pending.get("location")]
         locations = [loc for loc in locations if loc]
         merged: list[dict[str, Any]] = []
-        seen_keys: set[str] = set()
         failed_locs: list[str] = []
 
         for idx, loc in enumerate(locations, start=1):
             def _on_loc_progress(partial_records, status, _loc=loc, _idx=idx, _total=len(locations)):
                 prefix = f"〔{_idx}/{_total} {_loc}〕" if _total > 1 else ""
-                combined = merged + list(partial_records)
+                # 跨地点合并同样去重，避免地图气泡重复 key。
+                combined = _dedup_records(merged, list(partial_records))
                 on_progress(combined, f"{prefix}{status}")
 
             try:
@@ -1836,11 +1602,7 @@ def main() -> None:
                 failed_locs.append(loc)
                 on_progress(merged, f"〔{idx}/{len(locations)} {loc}〕查询失败：{exc}")
                 continue
-            for r in sub:
-                key = f"{r.get('酒店名称')}|{r.get('位置')}"
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    merged.append(r)
+            merged = _dedup_records(merged, sub)
             on_progress(merged, f"〔{idx}/{len(locations)} {loc}〕完成（累计 {len(merged)} 家）")
 
 
