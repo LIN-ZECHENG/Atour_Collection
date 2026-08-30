@@ -137,9 +137,16 @@ const DEFAULT_PROVINCE = "福建";
     const FALLBACK_DATA = {         // 拉取失败时的兜底，保证 UI 不空
       "福建": ["福州市"], "北京": ["北京市"], "上海": ["上海市"], "广东": ["广州市", "深圳市"],
     };
+    const META_KEY = '_updated_at';  // 顶层元字段（更新时间），不参与城市/省份选项
     function _cityData() { return CITIES_DATA || FALLBACK_DATA; }
-    function cityNames() { return Object.values(_cityData()).flat(); }
-    function provinceNames() { return Object.keys(_cityData()); }
+    function cityNames() {
+      return Object.entries(_cityData())
+        .filter(([k]) => k !== META_KEY)
+        .flatMap(([, v]) => v);
+    }
+    function provinceNames() {
+      return Object.keys(_cityData()).filter(k => k !== META_KEY);
+    }
 
     function sortKey(name) {
       return name; // 直接用 localeCompare 按拼音排序，无需内联拼音表

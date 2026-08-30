@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import datetime, timezone
 
 # 允许在任意 cwd 下运行：把 backend 目录加入 sys.path，确保能导入 services 包。
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -25,6 +26,11 @@ def _target_path() -> str:
     """frontend/public/atour-cities.json 的绝对路径（backend/../frontend/...）。"""
     root = os.path.dirname(_HERE)  # backend 的上一级 = 项目根
     return os.path.join(root, "frontend", "public", "atour-cities.json")
+
+
+def _now_utc() -> str:
+    """当前 UTC 时间，格式：2026-08-30T04:00:00Z。"""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def main() -> int:
@@ -42,8 +48,12 @@ def main() -> int:
 
     total = sum(len(v) for v in data.values())
     os.makedirs(os.path.dirname(target), exist_ok=True)
+    # JSON 不支持注释，改用顶层 _updated_at 元字段记录本次更新时间：
+    # 该值每次运行都会变化，保证「每次跑 action 都产生一次提交并重新部署」。
+    # 前端解析时会忽略此字段（见 SearchBox.astro 的 provinceNames/cityNames）。
+    payload = {"_updated_at": _now_utc(), **data}
     with open(target, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=1)
+        json.dump(payload, f, ensure_ascii=False, indent=1)
 
     print(f"[export_cities] 已导出 {len(data)} 个省 / {total} 个城市 -> {target}")
     return 0
