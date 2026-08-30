@@ -22,6 +22,7 @@ const { bg, ink } = palettes[shape as Shape];
     <title>{title}</title>
     <link rel="preconnect" href="https://fonts.gstatic.com" />
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600&display=swap" rel="stylesheet" />
+    <script is:inline type="module" src="https://sticker.oooo.so/embed/sticker-forge.es.js"></script>
 
   </head>
   <body data-shape={shape}>
@@ -31,6 +32,114 @@ const { bg, ink } = palettes[shape as Shape];
       <h1 class="label">{title}</h1>
       <div class="caption">精选您的每一次亚朵之旅</div>
       <SearchBox />
+      <!-- hero 容器 pointer-events:none，需为 sticker 单独恢复交互 -->
+      <sticker-forge id="my-sticker" style="display:block;width:640px;height:420px;pointer-events:auto"></sticker-forge>
     </div>
   </body>
+  <script is:inline type="module">
+    await customElements.whenDefined("sticker-forge");
+    const sticker = document.querySelector("#my-sticker");
+    await sticker.setSource({
+      "type": "text",
+      "text": "Select  Atour\n@LIN-ZECHENG/Atour_Collection",
+      "fontFamily": "Arial Rounded MT Bold, Arial Black, sans-serif",
+      "fontWeight": 900,
+      "color": "#2626eb",
+      "richText": {
+        "blocks": [
+          {
+            "align": "center",
+            "lineHeight": 1.1,
+            "runs": [
+              {
+                "text": "Select  ",
+                "color": "rgb(23, 23, 25)",
+                "fontSize": 32,
+                "fontWeight": 500,
+                "underline": false
+              },
+              {
+                "text": "Atour",
+                "color": "rgb(38, 38, 235)",
+                "fontSize": 32,
+                "fontWeight": 500,
+                "underline": false
+              }
+            ]
+          },
+          {
+            "align": "center",
+            "lineHeight": 1.2,
+            "runs": [
+              {
+                "text": "@LIN-ZECHENG/Atour_Collection",
+                "color": "rgb(23, 23, 25)",
+                "fontSize": 14,
+                "fontWeight": 500,
+                "underline": false
+              }
+            ]
+          }
+        ]
+      }
+    });
+    sticker.setOptions({
+      "outline": {
+        "width": 21,
+        "color": "#ffffff"
+      },
+      "edge": {
+        "width": 2.3,
+        "strength": 0.7
+      },
+      "shadow": {
+        "opacity": 0.22,
+        "blur": 22,
+        "distance": 16,
+        "angle": 42,
+        "color": "#191823"
+      },
+      "lighting": {
+        "direction": {
+          "x": -0.38,
+          "y": 0.52,
+          "z": 0.76
+        },
+        "intensity": 0.8,
+        "ambient": 0.35,
+        "softness": 0.6
+      },
+      "peel": {
+        "radius": 0.12,
+        "stiffness": 0.72,
+        "grabWidth": 22,
+        "maxAngle": 3.55,
+        "release": "snap"
+      },
+      "sound": {
+        "enabled": true,
+        "volume": 0.68
+      },
+      "back": {
+        "color": "#f7f5f2",
+        "gloss": 0.7,
+        "roughness": 0.3
+      },
+      "material": {
+        "type": "original",
+        "intensity": 0.86,
+        "scale": 1,
+        "holographicGrain": 0.72,
+        "seed": 0.37,
+        "holographicColors": [
+          "#f2a7c5",
+          "#8edfd5",
+          "#9db4ea"
+        ]
+      },
+      "tilt": -7.5,
+      "wind": 0.25,
+      "quality": "high"
+    });
+  </script>
 </html>
