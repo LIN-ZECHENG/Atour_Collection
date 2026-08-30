@@ -1,0 +1,76 @@
+name: Update Cities & Deploy
+
+# 定期从亚朵官方接口拉取最新城市列表，刷新 frontend/public/atour-cities.json，
+# 并重新构建、部署前端到 GitHub Pages（无需依赖 push 触发，自包含）。
+on:
+  schedule:
+    # 每周一 04:00 UTC（北京时间 12:00）自动更新
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 提交更新后的快照回仓库
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  update-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Export cities snapshot
+        run: python backend/export_cities.py
+
+      - name: Commit updated snapshot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/public/atour-cities.json
+          if git diff --cached --quiet; then
+            echo "城市列表无变化，跳过提交。"
+          else
+            git commit -m "chore: refresh atour-cities.json"
+            git push
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build static site
+        working-directory: frontend
+        env:
+          RESULT_APP_URL: ${{ secrets.RESULT_APP_URL }}
+        run: npm run build
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
